@@ -21,19 +21,18 @@ impl Storage {
         self.cache_dir.join(filename)
     }
 
-fn save<T: serde::Serialize + ?Sized>(&self, filename: &str, data: &T) {
-    let path = self.get_path(filename);
-    match bincode::serialize(data) {
-        Ok(bytes) => {
-            if let Err(e) = fs::write(&path, bytes) {
-                eprintln!("Failed to write {}: {}", filename, e);
+    fn save<T: serde::Serialize + ?Sized>(&self, filename: &str, data: &T) {
+        let path = self.get_path(filename);
+        match bincode::serialize(data) {
+            Ok(bytes) => {
+                if let Err(e) = fs::write(&path, bytes) {
+                    eprintln!("Failed to write {}: {}", filename, e);
+                }
             }
+            Err(e) => eprintln!("Failed to serialize {}: {}", filename, e),
         }
-        Err(e) => eprintln!("Failed to serialize {}: {}", filename, e),
     }
-}
 
-    // 通用读取方法
     fn load<T: serde::de::DeserializeOwned + Default>(&self, filename: &str) -> T {
         let path = self.get_path(filename);
         match fs::read(&path) {
@@ -41,12 +40,12 @@ fn save<T: serde::Serialize + ?Sized>(&self, filename: &str, data: &T) {
                 eprintln!("Failed to deserialize {}: {}", filename, e);
                 T::default()
             }),
-            Err(_) => T::default(), // 文件不存在时返回默认值
+            Err(_) => T::default(),
         }
     }
 
-    pub fn save_apps(&self, apps: &[SearchResult]) { self.save("apps_cache.bin", apps); }
-    pub fn load_apps(&self) -> Vec<SearchResult> { self.load("apps_cache.bin") }
+    pub fn save_apps(&self, apps: &[SearchResult]) { self.save("apps_cache_v2.bin", apps); }
+    pub fn load_apps(&self) -> Vec<SearchResult> { self.load("apps_cache_v2.bin") }
 
     pub fn save_habits(&self, habits: &UserHabits) { self.save("user_habits.bin", habits); }
     pub fn load_habits(&self) -> UserHabits { self.load("user_habits.bin") }

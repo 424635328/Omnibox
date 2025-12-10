@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from "vue";
-import { invoke, convertFileSrc } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/tauri";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { appWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/api/dialog"; // 需要在 tauri.conf.json 开启 dialog 权限
+// 已移除 open (dialog) 和 convertFileSrc 引用，因为不再需要选择文件
 import { 
   Search, CornerDownLeft, AppWindow, File, Monitor, 
   Settings as SettingsIcon, X, Loader2, Image as ImageIcon, FileText, Folder, Film, Music, ArrowUp, ArrowDown,
-  Palette, Upload
+  Palette
+  // 已移除 Upload icon
 } from 'lucide-vue-next';
 
 // --- 类型定义 ---
@@ -24,10 +25,10 @@ interface SearchResult {
 interface AppSettings {
   max_results: number;
   enable_autostart: boolean;
-  // 新增外观设置
-  theme_bg_image: string; // 图片路径
-  theme_bg_opacity: number; // 背景遮罩浓度 0-1
-  theme_bg_blur: number; // 背景模糊度 px
+  // theme_bg_image 字段保留以兼容后端接口，但前端不再允许修改
+  theme_bg_image: string; 
+  theme_bg_opacity: number; 
+  theme_bg_blur: number; 
 }
 
 // --- 状态管理 ---
@@ -51,36 +52,31 @@ const isKeyboardSelection = ref(false);
 
 // 设置状态
 const showSettings = ref(false);
-// 默认设置
+
+// 固定背景路径
+const FIXED_BG_PATH = "/bg.png"; 
+
 const settings = ref<AppSettings>({ 
   max_results: 100, 
   enable_autostart: false,
-  theme_bg_image: "",
-  theme_bg_opacity: 0.85,
-  theme_bg_blur: 20
+  theme_bg_image: FIXED_BG_PATH, 
+  theme_bg_opacity: 0.05,
+  theme_bg_blur: 0
 });
 
 // --- 计算属性：动态样式 ---
 const containerStyle = computed(() => {
-  const styles: Record<string, string> = {};
-  
-  if (settings.value.theme_bg_image) {
-    // 如果是本地路径，Tauri 需要转换协议
-    const imgSrc = settings.value.theme_bg_image.startsWith('http') 
-      ? settings.value.theme_bg_image 
-      : convertFileSrc(settings.value.theme_bg_image);
-      
-    styles['backgroundImage'] = `url('${imgSrc}')`;
-  }
-  
-  return styles;
+  // 直接使用固定路径，不再进行逻辑判断
+  return {
+    backgroundImage: `url('${FIXED_BG_PATH}')`
+  };
 });
 
 const overlayStyle = computed(() => {
   return {
     backgroundColor: `rgba(30, 30, 36, ${settings.value.theme_bg_opacity})`,
     backdropFilter: `blur(${settings.value.theme_bg_blur}px)`,
-    WebkitBackdropFilter: `blur(${settings.value.theme_bg_blur}px)` // Safari/Webkit 兼容
+    WebkitBackdropFilter: `blur(${settings.value.theme_bg_blur}px)`
   };
 });
 
@@ -100,8 +96,9 @@ const getIconComponent = (item: SearchResult) => {
 const loadSettings = async () => {
   try { 
     const saved = await invoke<AppSettings>("get_settings"); 
-    // 合并默认值，防止旧版本配置缺少新字段导致报错
     settings.value = { ...settings.value, ...saved };
+    // 强制覆盖：无论后端存了什么路径，前端始终使用固定路径
+    settings.value.theme_bg_image = FIXED_BG_PATH;
   } catch(e) { 
     console.error("加载设置失败:", e); 
   }
@@ -131,6 +128,8 @@ const performSearch = async (q: string) => {
 const saveSettings = async () => {
   try {
     settings.value.max_results = Number(settings.value.max_results);
+    // 确保保存时也是固定路径
+    settings.value.theme_bg_image = FIXED_BG_PATH;
     await invoke("save_settings", { newSettings: settings.value });
     
     showSettings.value = false;
@@ -152,28 +151,7 @@ const toggleSettings = () => {
   }
 };
 
-// 选择壁纸图片
-const selectWallpaper = async () => {
-  try {
-    const selected = await open({
-      multiple: false,
-      filters: [{
-        name: 'Images',
-        extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg']
-      }]
-    });
-    
-    if (selected && typeof selected === 'string') {
-      settings.value.theme_bg_image = selected;
-    }
-  } catch (e) {
-    console.error("选择图片失败:", e);
-  }
-};
-
-const clearWallpaper = () => {
-  settings.value.theme_bg_image = "";
-};
+// 已移除 selectWallpaper 和 clearWallpaper 函数
 
 const highlightText = (text: string, keyword: string) => {
   if (!keyword || !text) return text || '';
@@ -384,23 +362,12 @@ const handleKeyDown = (e: KeyboardEvent) => {
                 </div>
               </div>
 
-              <!-- 外观设置 -->
+              <!-- 外观设置 (移除壁纸选择，保留透明度/模糊度) -->
               <div class="settings-section-title" style="margin-top: 16px;">
-                <Palette :size="14"/> 外观与壁纸
+                <Palette :size="14"/> 外观
               </div>
               <div class="setting-group">
-                <div class="setting-item">
-                  <div class="setting-label">
-                    <label>自定义壁纸</label>
-                    <span class="setting-desc">选择一张本地图片作为背景。</span>
-                  </div>
-                  <div class="wallpaper-controls">
-                    <button class="btn-secondary" @click="selectWallpaper">
-                      <Upload :size="12"/> 选择图片
-                    </button>
-                    <button v-if="settings.theme_bg_image" class="btn-danger" @click="clearWallpaper">清除</button>
-                  </div>
-                </div>
+                <!-- 已移除图片选择行 -->
                 
                 <div class="setting-item column">
                    <div class="setting-label full-width">
@@ -460,6 +427,7 @@ body {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  transition: background-image 0.3s ease;
 }
 
 /* 遮罩层 */

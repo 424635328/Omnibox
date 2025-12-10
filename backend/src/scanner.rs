@@ -1,5 +1,6 @@
 use crate::models::SearchResult;
 use jwalk::{DirEntry, WalkDir};
+use pinyin::ToPinyin;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -23,12 +24,9 @@ fn is_garbage_folder(name: &str) -> bool {
         "appdata" | "temp" | "tmp" | "cache" | "cookies" | "history" | "thumbnails" |
         // 硬件驱动
         "nvidia" | "intel" | "amd" | "realtek" | "drivers"
-    ) || n.starts_with('.') // 忽略所有隐藏文件夹 (.config, .local 等)
+    ) || n.starts_with('.') 
 }
 
-// ==========================================
-// 2. 智能深度控制 (判断是否值得深入扫描)
-// ==========================================
 fn get_max_depth_for_path(path: &Path) -> usize {
     let path_str = path.to_string_lossy().to_lowercase();
     
@@ -39,15 +37,15 @@ fn get_max_depth_for_path(path: &Path) -> usize {
        path_str.contains("common") || 
        path_str.contains("apps") ||
        path_str.contains("software") {
-        return 5; // 允许深度 5 (例如: D:\Games\WoW\_retail_\Wow.exe)
+        return 8;
     }
     
-    // 普通目录 (如 D:\Data\Backup\...) 浅尝辄止，防止陷入深层文件夹
-    3 
+    // 普通目录浅尝辄止
+    6
 }
 
 // ==========================================
-// 3. 文件白名单 (只收录可执行程序，防止内存爆炸)
+// 3. 文件白名单 (只收录可执行程序)
 // ==========================================
 fn is_executable(entry: &DirEntry<((), ())>) -> bool {
     if !entry.file_type().is_file() { return false; }
@@ -55,8 +53,6 @@ fn is_executable(entry: &DirEntry<((), ())>) -> bool {
     let path = entry.path();
     let ext = path.extension().and_then(OsStr::to_str).unwrap_or("").to_lowercase();
 
-    // 严选模式：只通过 exe 和 快捷方式。
-    // 如果你全盘扫描图片/文档，内存一定会爆，所以这里只放行 App。
     match ext.as_str() {
         "exe" | "lnk" | "bat" | "cmd" | "com" | "msc" => true,
         #[cfg(target_os = "macos")]
@@ -67,7 +63,6 @@ fn is_executable(entry: &DirEntry<((), ())>) -> bool {
     }
 }
 
-// 获取文件类型
 fn get_file_type_name(path: &Path) -> String {
     let ext = path.extension().and_then(OsStr::to_str).unwrap_or("").to_lowercase();
     match ext.as_str() {
@@ -90,12 +85,34 @@ fn clean_name(path: &Path) -> String {
 }
 
 // ==========================================
-// 核心扫描逻辑
+// 4. 拼音生成工具 (已修复类型错误)
+// ==========================================
+fn generate_pinyin(name: &str) -> (String, String) {
+    let mut full_pinyin = String::new();
+    let mut acronym = String::new();
+
+    for char in name.chars() {
+        // 修正点：to_pinyin 返回的是 Option<Pinyin>，不需要再次解包
+        if let Some(p) = char.to_pinyin() {
+            full_pinyin.push_str(p.plain());
+            acronym.push(p.plain().chars().next().unwrap_or_default());
+            continue;
+        }
+        
+        // 非中文字符直接转小写保留
+        full_pinyin.push(char.to_ascii_lowercase());
+        acronym.push(char.to_ascii_lowercase());
+    }
+    (full_pinyin, acronym)
+}
+
+// ==========================================
+// 核心扫描入口
 // ==========================================
 pub fn scan_applications() -> Vec<SearchResult> {
     let mut roots = Vec::new();
 
-    // A. 必须扫描的高价值目标 (C盘核心)
+    // A. 必须扫描的高价值目标 (Windows Start Menu & PATH)
     #[cfg(target_os = "windows")]
     {
         if let Ok(pd) = std::env::var("ProgramData") {
@@ -107,7 +124,7 @@ pub fn scan_applications() -> Vec<SearchResult> {
         if let Some(desktop) = dirs::desktop_dir() {
             roots.push(desktop);
         }
-        // 加入 PATH 环境变量中的路径 (找回开发工具 code, git, node 等)
+        // 扫描环境变量 PATH (找回 code, node, git 等)
         if let Some(paths) = std::env::var_os("PATH") {
             for path in std::env::split_paths(&paths) {
                 if path.exists() { roots.push(path); }
@@ -115,28 +132,23 @@ pub fn scan_applications() -> Vec<SearchResult> {
         }
     }
     
-    // Mac/Linux 基础路径
     #[cfg(not(target_os = "windows"))]
     {
         roots.push(PathBuf::from("/Applications"));
         roots.push(PathBuf::from("/usr/share/applications"));
+        roots.push(PathBuf::from("/usr/local/bin"));
         if let Some(d) = dirs::desktop_dir() { roots.push(d); }
     }
 
-    // B. 全盘智能扫描 (D:, E:, F: ...)
+    // B. 全盘智能扫描 (挂载的所有磁盘，跳过 C 盘根)
     let disks = Disks::new_with_refreshed_list();
     for disk in &disks {
         let mount = disk.mount_point().to_path_buf();
-        
-        // 针对 C 盘的特殊处理：
-        // C 盘根目录太乱，我们通常只依靠上面的 "Start Menu" 扫描即可。
-        // 只有当用户确实在 C:\Games 这种非标准位置装软件时才需要扫根目录。
-        // 为了稳健，我们这里跳过 C 盘根目录的全盘扫描，只扫 D/E/F...
+        // C 盘依赖 Start Menu 和 PATH 已经够了，直接扫根目录太慢且危险
         #[cfg(target_os = "windows")]
         if mount == Path::new("C:\\") {
             continue; 
         }
-        
         roots.push(mount);
     }
 
@@ -153,14 +165,13 @@ pub fn scan_applications() -> Vec<SearchResult> {
             WalkDir::new(root)
                 .skip_hidden(true)
                 .follow_links(false)
-                .max_depth(depth) // <--- 应用智能深度
-                .process_read_dir(|_depth, _path, _state, children| {
-                    // 核心过滤逻辑：在进入文件夹之前就决定是否要抛弃它
+                .max_depth(depth)
+                .process_read_dir(|_, _, _, children| {
+                    // 核心过滤：进入文件夹前检查是否是垃圾目录
                     children.retain(|dir_entry_result| {
                         if let Ok(entry) = dir_entry_result {
                             if entry.file_type().is_dir() {
                                 let name = entry.file_name().to_string_lossy();
-                                // 如果是垃圾文件夹，直接在树枝上剪断，不进入
                                 return !is_garbage_folder(&name);
                             }
                         }
@@ -169,13 +180,19 @@ pub fn scan_applications() -> Vec<SearchResult> {
                 })
                 .into_iter()
                 .filter_map(|e| e.ok())
-                .filter(|e| is_executable(e)) // <--- 只保留 App
+                .filter(|e| is_executable(e)) // 只要可执行文件
                 .map(|e| {
                     let path = e.path();
+                    let name = clean_name(&path);
+                    // 生成拼音
+                    let (pinyin, acronym) = generate_pinyin(&name);
+                    
                     SearchResult::new(
                         path.to_string_lossy().to_string(),
-                        clean_name(&path),
-                        get_file_type_name(&path)
+                        name,
+                        get_file_type_name(&path),
+                        pinyin,
+                        acronym
                     )
                 })
                 .collect::<Vec<_>>()
@@ -185,8 +202,6 @@ pub fn scan_applications() -> Vec<SearchResult> {
     // D. 结果聚合与去重
     let mut unique_map = HashMap::new();
     for app in results {
-        // 简单的去重策略：同名应用保留路径短的？或者保留先扫描到的？
-        // 这里按 ID (路径) 去重，如果两个路径一样才去重
         let key = app.id.to_lowercase(); 
         unique_map.entry(key).or_insert(app);
     }

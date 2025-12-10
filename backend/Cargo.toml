@@ -19,20 +19,20 @@ dirs = "5.0"
 fuzzy-matcher = "0.3"
 bincode = "1.3"
 once_cell = "1.18"
+pinyin = "0.9"   # <--- 修改在这里：必须放在 [dependencies] 下面
 
 # 系统交互
 open = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
-auto-launch = "0.5" # 确认使用这个代替 tauri-plugin-autostart
+auto-launch = "0.5"
 
-# 日志 (强烈建议加上)
+# 日志
 log = "0.4"
 env_logger = "0.10"
 
 [build-dependencies]
-tauri-build = "1.5"
+tauri-build = { version = "1.5", features = [] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-pinyin = "0.9" 
