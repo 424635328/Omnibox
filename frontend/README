@@ -1,0 +1,142 @@
+# 🎨 Omnibox Frontend (Vue 3 UI)
+
+Omnibox 的用户界面层，采用 **[Vue 3](https://vuejs.org/)** + **[TypeScript](https://www.typescriptlang.org/)** + **[Vite](https://vitejs.dev/)** 构建。
+
+它负责提供类似 macOS Spotlight 或 Raycast 的丝滑交互体验，包括虚拟滚动、键盘导航、设置面板以及与 Rust 后端的高效通信。设计哲学是：**极简主义、无干扰、响应式**。
+
+## ✨ 核心特性
+
+*   **⚡ 极致性能**:
+    *   **滚轮防抖 (Scroll Lock)**: 智能判断用户是在“浏览”还是“选择”，解决滚动时选中项乱跳的问题。
+    *   **虚拟滚动优化**: 即使后端返回 500 条结果，列表渲染依然流畅。
+*   **⌨️ 键盘优先 (Keyboard First)**:
+    *   全键盘导航 (`↑` `↓` 选择，`Enter` 打开，`Esc` 隐藏)。
+    *   搜索结果自动高亮匹配字符。
+*   **🎨 现代 UI 设计**:
+    *   **Acrylic / Glassmorphism**: 深度毛玻璃背景，完美融合系统桌面。
+    *   **Overlay Scrollbar**: 悬浮式滚动条，不占用布局空间。
+    *   **Vector Icons**: 集成 `lucide-vue-next` 矢量图标库，根据文件类型动态显示图标。
+*   **⚙️ 动态设置面板**: 无需重启，即时调整最大结果数和开机自启状态。
+
+## 🛠 技术栈
+
+| 组件 | 技术/库 | 用途 |
+| :--- | :--- | :--- |
+| **Framework** | Vue 3 (Composition API) | 响应式 UI 框架 |
+| **Language** | TypeScript | 类型安全与代码健壮性 |
+| **Build Tool** | Vite | 极速 HMR 开发与构建 |
+| **Bridge** | `@tauri-apps/api` | 调用 Rust 后端指令 |
+| **Icons** | `lucide-vue-next` | 轻量级 React/Vue 图标库 |
+| **Styles** | CSS Variables + Flexbox | 原生 CSS 实现主题与布局 |
+
+## 📂 项目结构
+
+```text
+frontend/
+├── index.html          # 入口 HTML
+├── vite.config.ts      # Vite 配置 (端口固定 1420)
+├── tsconfig.json       # TypeScript 配置
+└── src/
+    ├── main.ts         # Vue 应用挂载点
+    ├── App.vue         # 核心组件 (包含所有逻辑与样式)
+    └── assets/         # 静态资源
+```
+
+## 🚀 开发指南
+
+### 1. 安装依赖
+```bash
+npm install
+# 确保安装了 tauri api 的 v1 版本 (如果后端是 v1)
+npm install @tauri-apps/api@^1.6.0
+```
+
+### 2. 启动开发服务器
+```bash
+npm run dev
+# 服务将在 http://localhost:1420 启动
+# 注意：前端无法独立运行核心功能，必须配合 `cargo run` 启动后端才能调用 API
+```
+
+### 3. 构建生产版本
+```bash
+npm run build
+# 构建产物将输出到 dist/ 目录，供 Tauri 后端打包使用
+```
+
+## 🧩 核心逻辑解析 (`App.vue`)
+
+### 1. 通信桥接 (Bridge)
+前端通过 `invoke` 函数向 Rust 发送指令，通过 `listen` 监听系统事件。
+```typescript
+import { invoke } from "@tauri-apps/api/tauri";
+import { listen } from "@tauri-apps/api/event";
+
+// 调用搜索
+const results = await invoke("search", { query: "cmd" });
+
+// 监听窗口唤醒 (Alt+Space)
+await listen("window-focused", () => {
+  // 自动聚焦输入框，重置列表
+  searchInput.value?.focus();
+});
+```
+
+### 2. 智能交互锁 (Interaction Locks)
+为了解决鼠标滚轮与 `mousemove` 事件的冲突，我们引入了状态锁：
+```typescript
+const isKeyboardScroll = ref(false); // 键盘操作时，允许自动滚动视图
+const isMouseScrolling = ref(false); // 鼠标滚轮滚动时，禁用 hover 高亮
+
+// 当检测到 scroll 事件时，暂时禁用 mousemove 处理逻辑 150ms
+const handleListScroll = () => {
+  isMouseScrolling.value = true;
+  // ... clearTimeout & setTimeout logic
+};
+```
+
+### 3. 关键词高亮 (Highlighting)
+使用正则替换将匹配的字符包裹在 `<span class="highlight">` 中：
+```typescript
+const highlightText = (text: string, keyword: string) => {
+  const safeKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // 转义正则符号
+  const regex = new RegExp(`(${safeKeyword})`, "gi");
+  return text.replace(regex, '<span class="highlight">$1</span>');
+};
+```
+
+## 🎨 样式定制 (CSS Variables)
+
+所有核心颜色均定义在 `:root` 中，方便未来支持暗黑/明亮模式切换。
+
+```css
+:root {
+  --bg-color: rgba(30, 30, 35, 0.95);      /* 主背景 (深色) */
+  --accent-color: #3b82f6;                 /* 强调色 (蓝) */
+  --selected-bg: rgba(255, 255, 255, 0.08);/* 选中项背景 */
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+}
+```
+
+## ⚙️ 设置面板
+
+设置面板是一个覆盖层 (Overlay)，通过 `v-if="showSettings"` 控制显示。
+*   **Max Results**: 输入数字直接绑定到 `settings.max_results`。
+*   **Launch at Startup**: 开关组件绑定到 `settings.enable_autostart`。
+*   **保存逻辑**: 点击 Save 时，将整个设置对象传回后端 `save_settings` 接口，后端负责写入磁盘和注册注册表。
+
+## 📝 常见问题
+
+**Q: 为什么图标报错 `ArrowUp is declared but never read`?**
+A: TypeScript 检查非常严格。如果引入了图标但在 `<template>` 中没使用，构建会失败。请删除 `import` 语句中未使用的图标名称。
+
+**Q: 滚动条为什么不显示？**
+A: 只有当结果数量超过窗口高度时才会显示。请在设置中将 "Max Results" 调大（如 100），并确保 CSS 中 `.result-area` 设置了 `overflow-y: auto` 或 `overlay`。
+
+**Q: 为什么输入框不能输入中文？**
+A: Tauri 在某些 Windows 版本下对 IME 输入法的支持可能需要调整。目前的实现使用了标准的 HTML `<input>`，通常是支持的。如果遇到问题，尝试在 `tauri.conf.json` 中调整窗口焦点策略。
+
+---
+
+© 2023 Omnibox Project. Built with ❤️ and Vue 3.

@@ -1,0 +1,13 @@
+cd E:\GitHub\Omnibox\frontend
+npm run dev
+
+cd E:\GitHub\Omnibox\backend
+cargo run
+
+
+按 Alt + Space。
+输入 cmd 或 calc 或 chrome。
+上下箭头选择，回车打开。
+
+
+cargo install tauri-cli

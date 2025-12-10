@@ -1,0 +1,39 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    
+    /* --- 关键修复 1: 解决 Promise 报错 (TS2705) --- */
+    "target": "esnext",
+    "module": "esnext",
+    "lib": ["esnext", "dom", "dom.iterable"],
+    /* ------------------------------------------- */
+
+    /* --- 关键修复 2: 解决 Tauri 类型找不到 (TS7016) --- */
+    /* 显式包含 vite/client 和 node 类型 */
+    "types": ["vite/client", "node"],
+    /* ------------------------------------------- */
+
+    /* 模块解析配置 */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    
+    /* 忽略第三方库的类型错误，防止 node_modules 报错 */
+    "skipLibCheck": true,
+
+    /* Linting (保持严格模式) */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    
+    /* 如果你的 TS 版本较低，下面这两行可能会报错，建议保留但如果报错则删除 */
+    "erasableSyntaxOnly": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
+}

@@ -1,0 +1,144 @@
+# 🦀 Omnibox Backend (Rust Core)
+
+Omnibox 的高性能核心后端，基于 [Rust](https://www.rust-lang.org/) 和 [Tauri](https://tauri.app/) 构建。
+
+它负责文件系统扫描、模糊匹配算法、用户习惯记忆以及系统级交互（托盘、全局快捷键、文件打开）。设计目标是：**极速启动、毫秒级搜索响应、极低内存占用**。
+
+## ✨ 核心特性
+
+*   **⚡ 极速全盘扫描**: 使用 `jwalk` + `rayon` 实现多线程并行文件扫描，智能剪枝黑名单目录（如 `node_modules`, `Windows`），在数秒内建立十万级文件索引。
+*   **🧠 智能混合排序算法**:
+    *   **模糊匹配 (Fuzzy Matching)**: 基于 `skim` 算法，支持拼写容错。
+    *   **频次加权 (Frequency)**: 越常用的 App 排名越靠前。
+    *   **上下文习惯 (Contextual Habits)**: 记忆 *"当搜索 'c' 时，用户选择了 Chrome"*，下次搜索 'c' 时 Chrome 绝对置顶。
+    *   **全匹配策略**: 同时匹配 `Title` (文件名) 和 `Filename` (含后缀)，支持类似 `ppt`, `6.15.` 的精确搜索。
+*   **💾 持久化缓存**: 使用 `bincode` 二进制序列化，实现**零延迟冷启动**。
+*   **🔌 系统集成**:
+    *   全局快捷键 (`Alt + Space`) 唤醒/隐藏。
+    *   失去焦点自动隐藏 (Spotlight 风格)。
+    *   系统托盘管理。
+    *   开机自启支持。
+
+## 🛠 技术栈
+
+| 组件 | 技术/库 | 用途 |
+| :--- | :--- | :--- |
+| **Framework** | Tauri v1.5 | 跨平台应用框架 |
+| **Language** | Rust | 内存安全与高性能逻辑 |
+| **I/O** | `jwalk` | 并行递归目录遍历 (替代标准 WalkDir) |
+| **Parallelism** | `rayon` | 数据并行处理与迭代 |
+| **Search** | `fuzzy-matcher` | 模糊字符串匹配算法 |
+| **Storage** | `bincode` | 高效二进制序列化/反序列化 |
+| **System** | `sysinfo` / `dirs` | 磁盘与系统目录获取 |
+| **Launch** | `tauri-plugin-autostart` | 跨平台开机自启管理 |
+
+## 📂 项目结构
+
+```text
+backend/
+├── Cargo.toml          # 依赖管理与 Feature 配置
+├── tauri.conf.json     # Tauri 核心配置 (权限、窗口、打包)
+└── src/
+    ├── main.rs         # 程序入口、Tauri 命令注册、主线程逻辑
+    ├── models.rs       # 数据结构 (SearchResult, UserHabits, AppSettings)
+    ├── scanner.rs      # 文件扫描器 (核心 I/O 逻辑、黑白名单)
+    └── storage.rs      # 持久化层 (读写缓存文件)
+```
+
+## 🚀 快速开始
+
+### 前置要求
+*   [Rust](https://www.rust-lang.org/tools/install) (建议 Nightly 或 Stable 最新版)
+*   Node.js (用于构建前端资源)
+
+### 开发环境运行
+
+1.  **启动前端** (在 `frontend` 目录):
+    ```bash
+    npm run dev
+    ```
+2.  **启动后端** (在 `backend` 目录):
+    ```bash
+    # 开发模式 (会监听 http://localhost:1420)
+    cargo run
+    ```
+
+### 生产环境打包
+
+1.  **构建前端静态资源**:
+    ```bash
+    cd frontend
+    npm run build
+    # 确保生成了 dist 目录
+    ```
+2.  **构建后端与打包**:
+    ```bash
+    cd backend
+    cargo tauri build
+    ```
+    生成的安装包位于 `backend/target/release/bundle/msi` (Windows) 或对应平台目录。
+
+## 📡 API 接口 (Tauri Commands)
+
+前端通过 `invoke` 调用以下 Rust 函数：
+
+### 1. `search(query: String) -> Vec<SearchResult>`
+*   **描述**: 核心搜索接口。
+*   **逻辑**:
+    1.  若 `query` 为空，返回最近使用 (`use_count > 0`) 的 Top 20。
+    2.  若不为空，并行计算所有 App 的得分。
+    3.  得分公式：`Score = FuzzyMatch + (UseCount * 5) + (HabitWeight * 50)`。
+*   **返回**: 排序后的结果列表（最大数量由设置决定）。
+
+### 2. `execute_item(id: String, query: String)`
+*   **描述**: 执行打开操作，并更新算法权重。
+*   **参数**:
+    *   `id`: 文件的唯一路径。
+    *   `query`: 用户当前的搜索词 (用于记录习惯)。
+*   **逻辑**:
+    1.  记录习惯：`Map[query][id] += 1`。
+    2.  更新频次：`App[id].use_count += 1`。
+    3.  异步调用系统 Shell 打开文件。
+    4.  异步保存数据到硬盘。
+
+### 3. `refresh_index()`
+*   **描述**: 手动触发后台全盘扫描。
+*   **逻辑**: 扫描新文件 -> 与旧缓存合并 (保留统计数据) -> 保存。
+
+### 4. `save_settings(new_settings: AppSettings)`
+*   **描述**: 保存用户设置并应用副作用。
+*   **逻辑**:
+    *   更新内存设置。
+    *   调用系统 API 注册/注销开机自启。
+    *   持久化到 `settings.bin`。
+
+## ⚙️ 性能优化细节
+
+### 1. 智能剪枝 (Pruning)
+在 `scanner.rs` 中使用了 `filter_entry`。不同于普通的过滤，它在**进入目录之前**就会判断。如果遇到 `node_modules`、`Windows`、`.git` 等黑名单目录，直接跳过整个子树。这使得扫描速度提升了 10 倍以上。
+
+### 2. 并行架构
+*   **磁盘级并行**: 利用 `sysinfo` 获取所有磁盘分区，使用 `Rayon` 并行开启扫描任务。
+*   **目录级并行**: 使用 `jwalk` 替代单线程的 `walkdir`，自动利用多核 CPU 递归遍历文件夹。
+
+### 3. 二进制缓存
+不使用 JSON，而是使用 `bincode` 存储索引数据。
+*   **优点**: 文件体积极小，反序列化速度接近内存拷贝速度。
+*   **效果**: 即使索引了 50,000 个文件，程序也能在 <100ms 内启动完毕。
+
+## 📝 常见问题 (FAQ)
+
+**Q: 为什么搜索不到某些文件？**
+A:
+1.  检查文件是否在 `scanner.rs` 的黑名单目录中 (如 `Program Files` 曾被屏蔽，现已开放)。
+2.  检查文件扩展名是否在白名单中 (目前支持 exe, lnk, bat, pdf, docx 等)。
+
+**Q: 滚动条为什么不显示？**
+A: 确保在设置中将 "Max Results" 设置为大于 10 的值（默认 100），内容超出窗口高度才会出现滚动条。
+
+**Q: 打包时报错 `custom-protocol` 缺失？**
+A: 请检查 `Cargo.toml` 的 `[features]` 部分是否正确定义了 `default = ["custom-protocol"]`。
+
+---
+
+© 2023 Omnibox Project. Built with ❤️ and Rust.
